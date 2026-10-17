@@ -1,0 +1,17 @@
+{
+  "name": "uniblox-checkout-rewards",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reliable checkout and milestone rewards service",
+  "engines": { "node": ">=24.12.0" },
+  "scripts": {
+    "start": "node src/server.ts",
+    "dev": "node --watch src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "7.0.2"
+  }
+}
