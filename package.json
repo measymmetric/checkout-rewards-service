@@ -1,5 +1,5 @@
 {
-  "name": "uniblox-checkout-rewards",
+  "name": "checkout-rewards-service",
   "version": "0.1.0",
   "private": true,
   "type": "module",

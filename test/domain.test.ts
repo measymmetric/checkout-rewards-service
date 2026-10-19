@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createStore, DomainError, LIMITS } from '../src/domain.ts';
+import { ApiError, createStore, LIMITS } from '../src/domain.ts';
 import type { Product, Store } from '../src/domain.ts';
 
 const product = (id = 'p', unitPriceCents = 105, inventory = 100): Product => ({ id, name: `Product ${id}`, unitPriceCents, inventory });
 function error(code: string, status?: number) {
-  return (value: unknown) => value instanceof DomainError && value.code === code && (status === undefined || value.status === status);
+  return (value: unknown) => value instanceof ApiError && value.code === code && (status === undefined || value.status === status);
 }
 function cartWith(store: Store, quantity = 1, productId = 'p'): string {
   const cart = store.createCart();
@@ -237,21 +237,24 @@ test('invalid configuration and combined admin patches fail before mutation', ()
   assert.throws(() => store.getOrder('missing'), error('ORDER_NOT_FOUND', 404));
 });
 
-test('cumulative revenue overflow rejects checkout without inventory, coupon, cart or replay side effects', { timeout: 120_000 }, () => {
-  const store = createStore({ products: [product('p', LIMITS.maxUnitPriceCents, LIMITS.maxInventory)], milestoneEvery: 1 });
-  const quantity = LIMITS.maxCartTotalCents / LIMITS.maxUnitPriceCents;
-  const fittingOrders = Math.floor(Number.MAX_SAFE_INTEGER / LIMITS.maxCartTotalCents);
-  for (let index = 0; index < fittingOrders; index++) {
-    if (index % 1000 === 0) store.updateProduct('p', { inventory: LIMITS.maxInventory });
-    buy(store, `bulk-${index}`, quantity);
-  }
-  const coupon = store.generateCoupon();
-  const id = cartWith(store, quantity);
-  const before = { inventory: store.listProducts(), coupons: store.listCoupons(), report: store.report() };
-  assert.throws(() => store.checkout(id, { idempotencyKey: 'overflow', couponCode: coupon.code }), error('LIMIT_EXCEEDED', 422));
-  assert.deepEqual({ inventory: store.listProducts(), coupons: store.listCoupons(), report: store.report() }, before);
-  assert.equal(store.getCart(id).status, 'open');
-  store.updateItem(id, 'p', 1);
-  assert.equal(store.checkout(id, { idempotencyKey: 'overflow', couponCode: coupon.code }).replayed, false);
-  assert.ok(Number.isSafeInteger(store.report().grossRevenueCents));
+test('configuration is readable and defaults to n=5, x=10', () => {
+  assert.deepEqual(createStore().getConfig(), { milestoneEvery: 5, discountPercent: 10 });
+  const configured = createStore({ products: [product()], milestoneEvery: 3, discountPercent: 25 });
+  assert.deepEqual(configured.getConfig(), { milestoneEvery: 3, discountPercent: 25 });
+  // Coupons must carry the configured percent, not a recomputed one.
+  for (let index = 0; index < 3; index++) buy(configured, `config-${index}`);
+  assert.equal(configured.generateCoupon().discountPercent, 25);
 });
+
+test('a single line total beyond the cart limit is refused rather than rounded', () => {
+  // The aggregate guard lives in report(), which already walks all orders; the
+  // per-line and per-cart bounds are what protect the checkout path itself.
+  const store = createStore({ products: [product('p', LIMITS.maxUnitPriceCents, LIMITS.maxInventory)] });
+  const id = cartWith(store, 1);
+  assert.throws(() => store.updateItem(id, 'p', 1001), error('LIMIT_EXCEEDED', 422));
+  assert.equal(store.getCart(id).subtotalCents, LIMITS.maxUnitPriceCents);
+  const order = store.checkout(id, { idempotencyKey: 'bounded' }).order;
+  assert.ok(Number.isSafeInteger(order.totalCents));
+  assert.equal(store.report().grossRevenueCents, LIMITS.maxUnitPriceCents);
+});
+

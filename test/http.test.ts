@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createServer, request as nodeRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { createApp, MAX_BODY_BYTES } from '../src/app.ts';
 import { createStore } from '../src/domain.ts';
-import type { CartView, Coupon, Order, Product, Report, Store } from '../src/domain.ts';
+import type { CartView, Coupon, Order, Product, Report, Store, StoreConfig } from '../src/domain.ts';
 
 type Failure = { error: { code: string; message: string } };
 type Checkout = { order: Order; replayed: boolean };
@@ -244,4 +245,89 @@ test('independent createApp defaults do not share carts or orders', async (t) =>
   const cart = (await first.api<CartView>('/carts', 'POST')).data;
   assert.equal((await second.api(`/carts/${cart.id}`)).status, 404);
   assert.equal((await second.api<Report>('/admin/reports')).data.totalOrders, 0);
+});
+
+test('local review page and fixed assets load with correct MIME while API stays JSON', async (t) => {
+  const { url, api } = await start(t, store());
+  for (const [path, file, mime] of [
+    ['/', 'index.html', 'text/html; charset=utf-8'],
+    ['/styles.css', 'styles.css', 'text/css; charset=utf-8'],
+    ['/app.js', 'app.js', 'text/javascript; charset=utf-8'],
+  ] as const) {
+    const response = await fetch(`${url}${path}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), mime);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    const content = await response.text();
+    assert.equal(content, await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8'));
+    assert.ok(content.length > 0);
+    if (path === '/') {
+      assert.match(content, /<!doctype html>/i);
+      assert.match(content, /styles\.css/);
+      assert.match(content, /app\.js/);
+    }
+    const wrongMethod = await api<Failure>(path, 'POST', {});
+    assert.equal(wrongMethod.status, 405);
+    assert.equal(wrongMethod.headers.get('allow'), 'GET');
+    assert.equal(wrongMethod.data.error.code, 'METHOD_NOT_ALLOWED');
+  }
+  const products = await api<Product[]>('/products');
+  assert.equal(products.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.equal(products.data[0]?.id, 'p');
+  assert.equal((await fetch(`${url}/?review=1`)).status, 200);
+});
+
+test('static routing never exposes arbitrary files or resolves traversal paths', async (t) => {
+  const { url } = await start(t, store());
+  const origin = new URL(url);
+  // Native HTTP preserves dot segments which fetch would normalize before sending.
+  for (const [path, expectedStatus] of [
+    ['/README.md', 404], ['/src/domain.ts', 404], ['/public/index.html', 404],
+    ['/../src/domain.ts', 404], ['/styles.css/../../README.md', 404],
+    ['/%2e%2e/src/domain.ts', 404], ['/..%2fsrc/domain.ts', 400],
+    ['/..%5csrc/domain.ts', 400],
+  ] as const) {
+    const result = await new Promise<{ status: number; type: string | undefined; body: string }>((resolve, reject) => {
+      const request = nodeRequest({ hostname: origin.hostname, port: origin.port, path, method: 'GET' }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => resolve({
+          status: response.statusCode!, type: response.headers['content-type'],
+          body: Buffer.concat(chunks).toString('utf8'),
+        }));
+      });
+      request.on('error', reject);
+      request.end();
+    });
+    assert.equal(result.status, expectedStatus, path);
+    assert.equal(result.type, 'application/json; charset=utf-8');
+    assert.ok((JSON.parse(result.body) as Failure).error.code);
+  }
+});
+
+test('GET /config exposes the configured milestone and discount', async (t) => {
+  const { api } = await start(t, createStore({
+    products: [{ id: 'p', name: 'Test product', unitPriceCents: 105, inventory: 5 }],
+    milestoneEvery: 3,
+    discountPercent: 25,
+  }));
+  const config = await api<StoreConfig>('/config');
+  assert.equal(config.status, 200);
+  assert.deepEqual(config.data, { milestoneEvery: 3, discountPercent: 25 });
+  // Reads must not mutate, and the route must reject writes.
+  assert.deepEqual((await api<StoreConfig>('/config')).data, config.data);
+  const write = await api<Failure>('/config', 'POST', {});
+  assert.equal(write.status, 405);
+  assert.equal(write.headers.get('allow'), 'GET');
+});
+
+test('every endpoint the bundled page loads on startup resolves', async (t) => {
+  // public/app.js fetches these four in one Promise.all; a single missing route
+  // rejects the batch and leaves the page blank, which is how /config regressed.
+  const { api } = await start(t, store());
+  for (const path of ['/products', '/admin/coupons', '/admin/reports', '/config']) {
+    const response = await api(path);
+    assert.equal(response.status, 200, `${path} must serve the page bootstrap`);
+  }
 });
