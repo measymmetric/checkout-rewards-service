@@ -14,3 +14,4 @@
 @media(max-width:760px){.product-card>.product-footer{flex-wrap:wrap;gap:6px}.product-card>.product-category{font-size:7px}.product-card>.add-product{font-size:9px}.cart-heading>.state-badge{max-width:85px}}
 @media(max-width:590px){.product-card{display:flex}.product-card>.product-category{margin:12px 12px 0}.product-card>.product-name{margin:5px 12px 0}.product-card>.product-footer{margin:12px 12px 0}.product-card>.add-product{margin:11px 12px 12px}.product-footer>.stock-pill{font-size:7px}.cart-heading>.state-badge{max-width:110px}.cart-items>.empty-state{min-height:180px}.cart-item-controls>strong{font-size:12px}.quantity-input{width:55px}.reward-illustration>span{font-size:13px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}.product-card:hover{transform:none}}
+.cart-secondary-actions .button-primary{min-height:34px;font-size:10px;padding:8px 14px;flex:none}

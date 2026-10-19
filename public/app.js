@@ -64,6 +64,10 @@ function render() {
   $('retry-checkout').disabled = state.busy || !state.attempt;
   $('retry-checkout').textContent = unresolved ? 'Retry to confirm order' : 'Try the same request again';
   $('new-cart').disabled = state.busy || unresolved;
+  // A checked-out cart disables every other control, so this becomes the only
+  // way forward and has to look like it.
+  $('new-cart').className = closed ? 'button button-primary' : 'button button-text';
+  $('new-cart').textContent = closed ? 'Start another order' : 'Start a new cart';
   $('refresh').disabled = state.busy;
   $('generate-coupon').disabled = state.busy;
   $('checkout-result').innerHTML = state.order ? `<span class="success-kicker">✓ Order confirmed</span><h3>Thank you. Your order is in.</h3><p>${money(state.order.totalCents)} total · Stock deducted once.</p><p class="order-reference">Order ${escapeHtml(state.order.id)}</p><p>Try the same request again to see a safe replay, or start a new cart.</p>` : unresolved ? '<h3>Let’s confirm your checkout</h3><p>The response was interrupted. Retry the same request before changing this cart.</p>' : '';
